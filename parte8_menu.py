@@ -4,7 +4,7 @@ PARTE 8 — Interface gráfica do menu inicial
 Tela de abertura com:
   * título e fundo animado (os mesmos triângulos e quadrados do jogo
     flutuando e girando com a matriz de rotação)
-  * botões: Jogar, Dificuldade (alterna Fácil/Médio/Difícil), Como jogar, Sair
+  * botões: Jogar, Dificuldade (alterna Fácil/Médio/Difícil), Como jogar
   * painel "Como jogar" com as regras
 """
 import math
@@ -39,8 +39,26 @@ REGRAS = [
     ("CONTROLES", Cores.JOGADOR_2, [
         "Mouse: mirar  |  Clique: jogar  |  Setas: ajuste fino (Shift = mais rápido)",
         "Enter/Espaço: confirmar  |  V: mostrar vértices  |  Esc: voltar ao menu",
+        "Celular: toque para mirar (ou arraste) e toque de novo no destino ou em \"Confirmar jogada\"",
     ]),
 ]
+
+
+# Versão curta das regras para a tela do celular (em duas colunas)
+REGRAS_CELULAR = [
+    [("OBJETIVO", Cores.DESTAQUE, ["Chegar à bandeira antes do adversário."]),
+     ("A CADA JOGADA", Cores.VALIDO, ["Um setor (raio R, ângulo α) mostra",
+                                      "até onde você pode ir. O movimento",
+                                      "é um segmento de reta."])],
+    [("BATIDAS", Cores.INVALIDO, ["Encostou num obstáculo? Volta para",
+                                  "onde estava e perde a próxima vez."]),
+     ("VITÓRIA", Cores.JOGADOR_1, ["Tocou a chegada, venceu. Se os dois",
+                                   "chegarem na mesma rodada, empate."]),
+     ("TOQUE", Cores.JOGADOR_2, ["Toque para mirar. Toque de novo no",
+                                 "destino (ou em Confirmar) para jogar."])],
+]
+
+FUNDO_MEDIO = misturar(Cores.FUNDO_TOPO, Cores.FUNDO_BASE, 0.5)
 
 
 class FormaFlutuante:
@@ -68,10 +86,12 @@ class FormaFlutuante:
         if self.pos.y < -margem: self.pos.y = config.ALTURA + margem
         if self.pos.y > config.ALTURA + margem: self.pos.y = -margem
 
-    def desenhar(self, camada):
+    def desenhar(self, tela):
+        # Cores "apagadas" já misturadas com o fundo: dá o efeito de transparência
+        # sem precisar de camada transparente (bem mais leve no navegador).
         pontos = [tuple(self.pos + rotacionar(Vetor(x, y) * self.escala, self.angulo)) for x, y in self.molde]
-        pygame.draw.polygon(camada, (*self.cor, 28), pontos)
-        pygame.draw.polygon(camada, (*self.cor, 90), pontos, 2)
+        pygame.draw.polygon(tela, misturar(self.cor, FUNDO_MEDIO, 0.88), pontos)
+        pygame.draw.polygon(tela, misturar(self.cor, FUNDO_MEDIO, 0.6), pontos, 2)
 
 
 class Menu:
@@ -83,22 +103,25 @@ class Menu:
         self.formas = [FormaFlutuante(rng) for _ in range(18)]
 
         cx = config.LARGURA // 2
-        largura, altura, y0 = 340, 54, 300
+        if config.CELULAR:
+            largura, altura, y0, passo = 320, 50, 190, 62
+        else:
+            largura, altura, y0, passo = 340, 54, config.Y0 + 340, 70
         self.botoes = [
             Botao((cx - largura // 2, y0, largura, altura), "Jogar", "jogar", Cores.VALIDO, 24),
-            Botao((cx - largura // 2, y0 + 70, largura, altura), "", "dificuldade", Cores.DESTAQUE),
-            Botao((cx - largura // 2, y0 + 140, largura, altura), "Como jogar", "regras", Cores.JOGADOR_1),
-            Botao((cx - largura // 2, y0 + 210, largura, altura), "Sair", "sair", Cores.INVALIDO),
+            Botao((cx - largura // 2, y0 + passo, largura, altura), "", "dificuldade", Cores.DESTAQUE),
+            Botao((cx - largura // 2, y0 + 2 * passo, largura, altura), "Como jogar", "regras", Cores.JOGADOR_1),
         ]
         self._atualizar_rotulo_dificuldade()
-        self.botao_voltar = Botao((cx - 120, config.ALTURA - 96, 240, 50), "Voltar", "voltar", Cores.JOGADOR_1)
+        voltar_y = config.ALTURA - (62 if config.CELULAR else 96)
+        self.botao_voltar = Botao((cx - 120, voltar_y, 240, 50), "Voltar", "voltar", Cores.JOGADOR_1)
 
     def _atualizar_rotulo_dificuldade(self):
         self.botoes[1].rotulo = f"Dificuldade: {self.dificuldade}"
 
     # ------------------------------------------------ Eventos ----
     def tratar_evento(self, evento):
-        """Devolve 'jogar', 'sair' ou None."""
+        """Devolve 'jogar' ou None."""
         if self.mostrando_regras:
             if self.botao_voltar.clicado(evento) or (evento.type == pygame.KEYDOWN and
                                                      evento.key in (pygame.K_ESCAPE, pygame.K_RETURN)):
@@ -127,10 +150,8 @@ class Menu:
     # ------------------------------------------------ Desenho ----
     def desenhar(self, tela):
         desenhar_fundo(tela)
-        camada = pygame.Surface(tela.get_size(), pygame.SRCALPHA)
         for forma in self.formas:
-            forma.desenhar(camada)
-        tela.blit(camada, (0, 0))
+            forma.desenhar(tela)
 
         if self.mostrando_regras:
             self._desenhar_regras(tela)
@@ -138,21 +159,32 @@ class Menu:
 
         cx = config.LARGURA // 2
         flutuar = 6 * math.sin(self.tempo * 1.6)
-        texto_com_sombra(tela, "DESLOCAMENTO", (cx, 120 + flutuar), 64, Cores.DESTAQUE)
-        texto_com_sombra(tela, "COM OBSTÁCULOS", (cx, 186 + flutuar), 40, Cores.TEXTO)
+        if config.CELULAR:  # (y do título, y do subtítulo, y dos créditos, tamanhos, distância dos marcadores)
+            y1, y2, y3, t1, t2, dx = 58, 112, 152, 52, 32, 250
+        else:
+            topo = config.Y0 + 20
+            y1, y2, y3, t1, t2, dx = topo + 120, topo + 186, topo + 236, 64, 40, 300
+        texto_com_sombra(tela, "DESLOCAMENTO", (cx, y1 + flutuar), t1, Cores.DESTAQUE)
+        texto_com_sombra(tela, "COM OBSTÁCULOS", (cx, y2 + flutuar), t2, Cores.TEXTO)
         texto(tela, "Trabalho de GAAL  ·  Geometria Analítica e Álgebra Linear",
-              (cx, 236), 17, Cores.TEXTO_SUAVE, False, "center")
+              (cx, y3), 17, Cores.TEXTO_SUAVE, False, "center")
 
         # Os dois competidores enfeitando o título
-        desenhar_jogador(tela, (cx - 300, 152 + flutuar), Cores.JOGADOR_1, 1, 16, True, self.tempo)
-        desenhar_jogador(tela, (cx + 300, 152 - flutuar), Cores.JOGADOR_2, 2, 16, True, self.tempo + 1)
+        y_marcador = (y1 + y2) // 2
+        desenhar_jogador(tela, (cx - dx, y_marcador + flutuar), Cores.JOGADOR_1, 1, 16, True, self.tempo)
+        desenhar_jogador(tela, (cx + dx, y_marcador - flutuar), Cores.JOGADOR_2, 2, 16, True, self.tempo + 1)
 
         for botao in self.botoes:
             botao.desenhar(tela)
-        texto(tela, "Enter para jogar", (cx, config.ALTURA - 28), 14, Cores.TEXTO_SUAVE, False, "center")
+        dica = "Toque em Jogar para começar" if config.NO_NAVEGADOR else "Enter para jogar"
+        texto(tela, dica, (cx, config.ALTURA - (16 if config.CELULAR else 28)), 14,
+              Cores.TEXTO_SUAVE, False, "center")
 
     def _desenhar_regras(self, tela):
         escurecer_tela(tela, 120)
+        if config.CELULAR:
+            self._desenhar_regras_celular(tela)
+            return
         rect = pygame.Rect(0, 0, 820, 520)
         rect.center = (config.LARGURA // 2, config.ALTURA // 2 - 30)
         painel(tela, rect)
@@ -166,4 +198,22 @@ class Menu:
                 texto(tela, linha, (rect.left + 50, y), 15, misturar(Cores.TEXTO, Cores.TEXTO_SUAVE, 0.2))
                 y += 21
             y += 10
+        self.botao_voltar.desenhar(tela)
+
+    def _desenhar_regras_celular(self, tela):
+        rect = pygame.Rect(12, 10, config.LARGURA - 24, config.ALTURA - 82)
+        painel(tela, rect)
+        texto(tela, "COMO JOGAR", (rect.centerx, rect.top + 24), 26, Cores.DESTAQUE, True, "center")
+        largura_coluna = (rect.width - 40) // 2
+        for c, coluna in enumerate(REGRAS_CELULAR):
+            x = rect.left + 24 + c * (largura_coluna + 16)
+            y = rect.top + 52
+            for titulo, cor, linhas in coluna:
+                pygame.draw.rect(tela, cor, (x, y + 4, 5, 16), border_radius=3)
+                texto(tela, titulo, (x + 12, y), 17, cor, True)
+                y += 24
+                for linha in linhas:
+                    texto(tela, linha, (x + 12, y), 16, misturar(Cores.TEXTO, Cores.TEXTO_SUAVE, 0.2))
+                    y += 21
+                y += 8
         self.botao_voltar.desenhar(tela)

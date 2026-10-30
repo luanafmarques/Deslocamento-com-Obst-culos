@@ -34,6 +34,8 @@ escolhe um destino dentro dele, a jogada é validada e a nova posição é exibi
 
 Controles: mouse mira, clique joga · setas = ajuste fino (Shift = rápido) ·
 Enter/Espaço confirma · V mostra as coordenadas dos vértices · Esc volta ao menu.
+No celular: toque (ou arraste) para mirar e toque de novo no destino, ou em
+"Confirmar jogada", para jogar. Use o celular deitado.
 
 ## Divisão do trabalho (9 partes)
 

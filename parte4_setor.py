@@ -83,15 +83,25 @@ def desenhar_setor(superficie, plano, setor, cor, tempo):
 
     superficie.set_clip(plano.rect)
 
-    # Preenchimento translúcido "respirando" + anéis de 1 em 1 unidade
-    camada = pygame.Surface(superficie.get_size(), pygame.SRCALPHA)
+    # Preenchimento translúcido "respirando" + anéis de 1 em 1 unidade.
+    # A camada transparente tem só o tamanho do setor (bem mais leve no navegador).
+    x0 = int(min(x for x, _ in contorno)) - 2
+    y0 = int(min(y for _, y in contorno)) - 2
+    largura = int(max(x for x, _ in contorno)) - x0 + 4
+    altura = int(max(y for _, y in contorno)) - y0 + 4
+
+    def local(pontos):
+        return [(x - x0, y - y0) for x, y in pontos]
+
+    camada = pygame.Surface((largura, altura), pygame.SRCALPHA)
     alpha = int(50 + 18 * math.sin(tempo * 3))
-    pygame.draw.polygon(camada, (*cor, alpha), contorno)
+    pygame.draw.polygon(camada, (*cor, alpha), local(contorno))
     anel = 1
     while anel < setor.raio:
-        pygame.draw.lines(camada, (*cor, 90), False, [plano.para_tela(p) for p in setor.pontos_do_arco(anel, 32)], 1)
+        arco = [plano.para_tela(p) for p in setor.pontos_do_arco(anel, 32)]
+        pygame.draw.lines(camada, (*cor, 90), False, local(arco), 1)
         anel += 1
-    superficie.blit(camada, (0, 0))
+    superficie.blit(camada, (x0, y0))
 
     # Borda do setor
     pygame.draw.lines(superficie, cor, True, contorno, 2)

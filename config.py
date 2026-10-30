@@ -4,9 +4,55 @@ config.py — Constantes compartilhadas por todas as partes do jogo.
 Mudar um valor aqui muda o jogo inteiro (tamanho do plano, distâncias mínimas,
 dificuldade etc.), sem precisar mexer no código das partes.
 """
+import sys
+
+# True quando o jogo roda no navegador (versão web gerada pelo pygbag)
+NO_NAVEGADOR = sys.platform == "emscripten"
 
 # ---------------------------------------------------------------- Janela ----
-LARGURA, ALTURA = 1240, 680
+# Layout de PC: desenhado em 1240x680. No navegador a área do jogo cresce para
+# ter a mesma proporção da janela (sem faixas nos lados) e o conteúdo fica
+# centralizado, deslocado por (X0, Y0).
+# Layout de CELULAR: área do jogo com só 420 px de altura (tudo aparece maior),
+# plano ocupando quase a tela toda e um painel compacto à direita.
+BASE_LARGURA, BASE_ALTURA = 1240, 680
+ALTURA_CELULAR = 420
+
+
+def medidas_da_janela():
+    """(largura, altura) da janela do navegador em px, ou None fora do navegador."""
+    if not NO_NAVEGADOR:
+        return None
+    try:
+        import platform
+        return platform.window.innerWidth, platform.window.innerHeight
+    except Exception:
+        return None
+
+
+def eh_celular(medidas):
+    """Tela pequena (o lado menor tem menos de 600 px) = layout de celular."""
+    return medidas is not None and min(medidas) < 600
+
+
+def tamanho_para(medidas):
+    """Tamanho da área do jogo com a mesma proporção da janela."""
+    if medidas is None:
+        return BASE_LARGURA, BASE_ALTURA
+    proporcao = medidas[0] / medidas[1]
+    if eh_celular(medidas):
+        proporcao = max(1.8, min(3.0, proporcao))
+        return round(ALTURA_CELULAR * proporcao), ALTURA_CELULAR
+    proporcao = max(1.2, min(3.5, proporcao))
+    if proporcao >= BASE_LARGURA / BASE_ALTURA:
+        return round(BASE_ALTURA * proporcao), BASE_ALTURA
+    return BASE_LARGURA, round(BASE_LARGURA / proporcao)
+
+
+_medidas = medidas_da_janela()
+CELULAR = eh_celular(_medidas)
+LARGURA, ALTURA = tamanho_para(_medidas)
+X0, Y0 = (LARGURA - BASE_LARGURA) // 2, (ALTURA - BASE_ALTURA) // 2
 FPS = 60
 TITULO = "Deslocamento com Obstáculos - GAAL"
 
@@ -17,9 +63,21 @@ PLANO_YMIN, PLANO_YMAX = -7, 7
 ESCALA = 38  # pixels por unidade
 
 # Retângulos da tela (x, y, largura, altura) em pixels
-RECT_PLANO = (16, 64, (PLANO_XMAX - PLANO_XMIN) * ESCALA, (PLANO_YMAX - PLANO_YMIN) * ESCALA)
-RECT_LATERAL = (944, 64, 280, 600)
-RECT_MENSAGEM = (16, 606, RECT_PLANO[2], 58)
+if CELULAR:
+    _margem, _painel = 6, 214
+    _escala = min((LARGURA - _painel - 3 * _margem) / (PLANO_XMAX - PLANO_XMIN),
+                  (ALTURA - 2 * _margem) / (PLANO_YMAX - PLANO_YMIN))
+    _pl = round((PLANO_XMAX - PLANO_XMIN) * _escala)
+    _pa = round((PLANO_YMAX - PLANO_YMIN) * _escala)
+    _painel = min(LARGURA - _pl - 3 * _margem, 280)      # painel não fica largo demais
+    _x = (LARGURA - (_pl + _painel + 3 * _margem)) // 2  # centraliza plano + painel
+    RECT_PLANO = (_x + _margem, (ALTURA - _pa) // 2, _pl, _pa)
+    RECT_LATERAL = (_x + _pl + 2 * _margem, _margem, _painel, ALTURA - 2 * _margem)
+    RECT_MENSAGEM = None  # no celular a mensagem aparece flutuando em cima do plano
+else:
+    RECT_PLANO = (X0 + 16, Y0 + 64, (PLANO_XMAX - PLANO_XMIN) * ESCALA, (PLANO_YMAX - PLANO_YMIN) * ESCALA)
+    RECT_LATERAL = (X0 + 944, Y0 + 64, 280, 600)
+    RECT_MENSAGEM = (X0 + 16, Y0 + 606, RECT_PLANO[2], 58)
 
 # --------------------------------------------- Pontos de partida e chegada ----
 X_PARTIDA = -10.5          # linha de largada (reta vertical x = -10.5)

@@ -9,6 +9,7 @@ PARTE 6 — Lógica do jogo para INICIAR e FINALIZAR
       FIM      -> alguém chegou: mostra o resultado e as estatísticas
 * executar(): laço principal do pygame, alterna entre o menu (parte 8) e a partida.
 """
+import asyncio
 import math
 import random
 
@@ -26,7 +27,8 @@ from parte7_regras import criar_jogadores, ControleDeTurnos
 from parte8_menu import Menu
 from parte9_visual import (Cores, Botao, Particulas, Tremor, texto, texto_com_sombra, rotulo, painel,
                            desenhar_fundo, escurecer_tela, desenhar_jogador, desenhar_fantasma, desenhar_x,
-                           desenhar_trajetoria, linha_tracejada, misturar, suavizar, suavizar_entrada)
+                           desenhar_trajetoria, linha_tracejada, misturar, suavizar, suavizar_entrada,
+                           desenhar_aviso_girar, caixa_de_texto)
 
 MIRANDO, ANIMANDO, FIM = "mirando", "animando", "fim"
 
@@ -42,6 +44,17 @@ class Partida:
         cx, cy = config.LARGURA // 2, config.ALTURA // 2
         self.botoes_fim = [Botao((cx - 250, cy + 84, 240, 52), "Jogar novamente", "reiniciar", Cores.VALIDO),
                            Botao((cx + 10, cy + 84, 240, 52), "Menu principal", "menu", Cores.JOGADOR_1)]
+        lateral = pygame.Rect(config.RECT_LATERAL)
+        if config.CELULAR:
+            self.botao_confirmar = Botao((lateral.left + 8, lateral.bottom - 58, lateral.width - 16, 50),
+                                         "Confirmar jogada", "confirmar", Cores.VALIDO, 19)
+            # no celular não existe tecla Esc: precisa de um botão para voltar
+            self.botao_menu = Botao((lateral.right - 76, lateral.top + 8, 68, 30), "Menu", "menu",
+                                    Cores.JOGADOR_1, 15)
+        else:
+            self.botao_confirmar = Botao((lateral.left + 12, lateral.top + 504, lateral.width - 24, 46),
+                                         "Confirmar jogada", "confirmar", Cores.VALIDO, 18)
+            self.botao_menu = None
         self.iniciar()
 
     # ================================================================ INICIAR ====
@@ -63,6 +76,7 @@ class Partida:
         self.jogadores = criar_jogadores(self.pista.partidas)
         self.turnos = ControleDeTurnos(self.jogadores)
         self.mensagens = [("Partida iniciada! O Jogador 1 começa.", Cores.TEXTO)]
+        self.instante_mensagem = 0.0  # quando chegou a última mensagem (aviso do celular)
         self.marcas_batida = []   # [ponto, segundos restantes]
         self.mostrar_vertices = False
         self.animacao = None
@@ -72,6 +86,7 @@ class Partida:
     def _preparar_jogada(self):
         self.setor = self._sortear_setor(self.turnos.jogador_atual)
         self.mira = self.setor.ponto(self.setor.raio * 0.6, self.setor.direcao)
+        self.mira_tocada = False  # no celular: o jogador já tocou para escolher o destino?
 
     def _sortear_setor(self, jogador):
         """Sorteia setores até achar um que tenha pelo menos uma jogada sem batida."""
@@ -87,6 +102,8 @@ class Partida:
         for nova in novas:
             if nova != self.mensagens[-1]:
                 self.mensagens.append(nova)
+        if novas:
+            self.instante_mensagem = self.tempo
         self.mensagens = self.mensagens[-2:]
 
     # ================================================================ EVENTOS ====
@@ -103,6 +120,8 @@ class Partida:
                     return "menu"
             return None
 
+        if self.botao_menu and self.botao_menu.clicado(evento):
+            return "menu"
         if evento.type == pygame.KEYDOWN:
             if evento.key == pygame.K_ESCAPE:
                 return "menu"
@@ -112,12 +131,26 @@ class Partida:
         if self.estado != MIRANDO:
             return None
 
-        if evento.type == pygame.MOUSEMOTION and self.plano.rect.collidepoint(evento.pos):
-            self.mira = self.plano.para_plano(evento.pos)
+        # Toque (celular): o pygame transforma o toque em clique com touch=True.
+        # Tocar só MIRA; tocar de novo no mesmo lugar (ou no botão) CONFIRMA.
+        toque = getattr(evento, "touch", False)
+
+        if self.botao_confirmar.clicado(evento):
+            self._confirmar_jogada()
+        elif evento.type == pygame.MOUSEMOTION and self.plano.rect.collidepoint(evento.pos):
+            if not toque or evento.buttons[0]:  # no toque, só segue o dedo se estiver arrastando
+                self.mira = self.plano.para_plano(evento.pos)
         elif (evento.type == pygame.MOUSEBUTTONDOWN and evento.button == 1
               and self.plano.rect.collidepoint(evento.pos)):
-            self.mira = self.plano.para_plano(evento.pos)
-            self._confirmar_jogada()
+            ponto = self.plano.para_plano(evento.pos)
+            if not toque:
+                self.mira = ponto
+                self._confirmar_jogada()
+            elif self.mira_tocada and distancia(ponto, self.mira) < 0.5:
+                self._confirmar_jogada()
+            else:
+                self.mira = ponto
+                self.mira_tocada = True
         elif evento.type == pygame.KEYDOWN:
             if evento.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                 self._confirmar_jogada()
@@ -226,7 +259,8 @@ class Partida:
     # ================================================================ DESENHO ====
     def desenhar(self, tela):
         desenhar_fundo(tela)
-        self._desenhar_topo(tela)
+        if not config.CELULAR:
+            self._desenhar_topo(tela)
         self.plano.desenhar(tela)
         atual = self.turnos.jogador_atual
 
@@ -255,20 +289,25 @@ class Partida:
         tela.set_clip(None)
 
         self.particulas.desenhar(tela)
-        self._desenhar_lateral(tela)
-        self._desenhar_mensagens(tela)
+        if config.CELULAR:
+            self._desenhar_painel_celular(tela)
+            self._desenhar_aviso_celular(tela)
+        else:
+            self._desenhar_lateral(tela)
+            self._desenhar_mensagens(tela)
         if self.estado == FIM:
             self._desenhar_fim(tela)
 
     def _desenhar_topo(self, tela):
-        texto(tela, "Deslocamento com Obstáculos", (18, 14), 24, Cores.DESTAQUE, True)
+        x0, y0 = config.X0, config.Y0
+        texto(tela, "Deslocamento com Obstáculos", (x0 + 18, y0 + 14), 24, Cores.DESTAQUE, True)
         n_tri = sum(o.tipo == "triangulo" for o in self.obstaculos)
         n_quad = len(self.obstaculos) - n_tri
         plano_direita = config.RECT_PLANO[0] + config.RECT_PLANO[2]
         texto(tela, f"Dificuldade: {self.nome_dificuldade}   ·   {n_tri} triângulos   ·   "
-                    f"{n_quad} quadrados   ·   Esc: menu", (plano_direita, 22), 15, Cores.TEXTO_SUAVE, False, "topright")
+                    f"{n_quad} quadrados   ·   Esc: menu", (plano_direita, y0 + 22), 15, Cores.TEXTO_SUAVE, False, "topright")
         lateral = pygame.Rect(config.RECT_LATERAL)
-        texto(tela, f"Rodada {self.turnos.rodada}", (lateral.centerx, 32), 24, Cores.TEXTO, True, "center")
+        texto(tela, f"Rodada {self.turnos.rodada}", (lateral.centerx, y0 + 32), 24, Cores.TEXTO, True, "center")
 
     def _desenhar_mira(self, tela, jogador):
         origem = self.plano.para_tela(jogador.posicao)
@@ -357,10 +396,69 @@ class Partida:
                   (card.left + 12, card.top + 42), 13, Cores.TEXTO_SUAVE)
             y += 68
 
-        texto(tela, "Mouse: mirar · Clique: jogar · V: vértices", (r.centerx, r.bottom - 42), 13,
-              Cores.TEXTO_SUAVE, False, "center")
-        texto(tela, "Setas: ajuste fino · Enter: confirmar", (r.centerx, r.bottom - 22), 13,
-              Cores.TEXTO_SUAVE, False, "center")
+        if self.estado == MIRANDO:
+            self.botao_confirmar.desenhar(tela)
+        dica = ("Toque: mirar · Toque de novo: jogar" if config.NO_NAVEGADOR
+                else "Clique: jogar · Setas: ajuste · V: vértices")
+        texto(tela, dica, (r.centerx, r.bottom - 22), 13, Cores.TEXTO_SUAVE, False, "center")
+
+    def _desenhar_painel_celular(self, tela):
+        """Painel compacto do celular: só o essencial, com letras grandes."""
+        r = pygame.Rect(config.RECT_LATERAL)
+        painel(tela, r, raio=12)
+        x, direita = r.left + 12, r.right - 12
+        y = r.top + 12
+        texto(tela, f"Rodada {self.turnos.rodada}", (x, y + 2), 16, Cores.TEXTO_SUAVE, True)
+        self.botao_menu.desenhar(tela)
+        y += 40
+        atual = self.turnos.jogador_atual
+
+        if self.estado == FIM:
+            texto(tela, self.titulo_fim, (x, y), 20, self.cor_fim, True)
+            y += 40
+        else:
+            desenhar_jogador(tela, (x + 11, y + 13), atual.cor, atual.numero, 11, True, self.tempo)
+            texto(tela, atual.nome, (x + 30, y), 22, atual.cor, True)
+            y += 38
+            s = self.setor
+            texto(tela, "Raio", (x, y), 17, Cores.TEXTO_SUAVE)
+            texto(tela, f"R = {s.raio:.2f}", (direita, y), 17, Cores.TEXTO, True, "topright")
+            y += 25
+            texto(tela, "Ângulo", (x, y), 17, Cores.TEXTO_SUAVE)
+            texto(tela, f"α = {math.degrees(s.abertura):.0f}°", (direita, y), 17, Cores.DESTAQUE, True, "topright")
+            y += 25
+            texto(tela, f"Q = {self.mira.formatar(1)}", (x, y), 17, Cores.TEXTO, True)
+            y += 25
+            dentro = s.contem(self.mira) and self.plano.contem(self.mira, config.RAIO_JOGADOR)
+            texto(tela, "Dentro do setor" if dentro else "Fora do setor", (x, y), 17,
+                  Cores.VALIDO if dentro else Cores.INVALIDO, True)
+            y += 32
+
+        pygame.draw.line(tela, Cores.PAINEL_BORDA, (x, y), (direita, y))
+        y += 8
+        for jogador in self.jogadores:
+            pygame.draw.circle(tela, jogador.cor, (x + 6, y + 11), 6)
+            texto(tela, jogador.nome, (x + 18, y), 16, jogador.cor, True)
+            if jogador.chegou:
+                status, cor = "Chegou!", Cores.DESTAQUE
+            elif jogador.turnos_bloqueados:
+                status, cor = "Perde a vez", Cores.INVALIDO
+            else:
+                status, cor = f"falta {distancia(jogador.posicao, self.pista.chegada):.1f}", Cores.TEXTO_SUAVE
+            texto(tela, status, (direita, y + 1), 15, cor, True, "topright")
+            y += 26
+
+        if self.estado == MIRANDO:
+            self.botao_confirmar.desenhar(tela)
+
+    def _desenhar_aviso_celular(self, tela):
+        """No celular a última mensagem aparece por alguns segundos em cima do plano."""
+        idade = self.tempo - self.instante_mensagem
+        if idade > 4.5 or self.estado == FIM:
+            return
+        mensagem, cor = self.mensagens[-1]
+        caixa_de_texto(tela, mensagem, (self.plano.rect.centerx, self.plano.rect.top + 10),
+                       self.plano.rect.width - 60, 17, cor)
 
     def _desenhar_mensagens(self, tela):
         r = pygame.Rect(config.RECT_MENSAGEM)
@@ -396,12 +494,15 @@ class Partida:
 
         for botao in self.botoes_fim:
             botao.desenhar(tela)
-        texto(tela, "R: jogar novamente  ·  Esc: menu", (caixa.centerx, caixa.bottom - 18), 13,
-              Cores.TEXTO_SUAVE, False, "center")
+        if not config.CELULAR:
+            texto(tela, "R: jogar novamente  ·  Esc: menu", (caixa.centerx, caixa.bottom - 18), 13,
+                  Cores.TEXTO_SUAVE, False, "center")
 
 
 # ======================================================== LAÇO PRINCIPAL ====
-def executar():
+async def executar():
+    """É 'async' para também rodar no navegador (pygbag): o 'await' a cada quadro
+    devolve o controle para o navegador desenhar a página."""
     pygame.init()
     pygame.display.set_caption(config.TITULO)
     tela = pygame.display.set_mode((config.LARGURA, config.ALTURA), pygame.SCALED | pygame.RESIZABLE)
@@ -410,10 +511,26 @@ def executar():
 
     dificuldade = config.DIFICULDADE_PADRAO
     cena = Menu(dificuldade)
+    tempo = 0.0
+    em_pe, proxima_checagem = False, 0.0
+    _pintar_fundo_da_pagina()
     while True:
         dt = min(relogio.tick(config.FPS) / 1000, 0.05)
+        tempo += dt
+        if tempo >= proxima_checagem:
+            proxima_checagem = tempo + 0.5
+            medidas = config.medidas_da_janela()
+            em_pe = medidas is not None and medidas[0] < medidas[1]
+            # Celular girou (ou a janela mudou de formato) enquanto está no menu:
+            # recarrega a página para o jogo ocupar a tela toda de novo.
+            # (tolerância de 25% para não recarregar quando a barra de endereço aparece/some)
+            if medidas is not None and not em_pe and isinstance(cena, Menu):
+                nova_largura, nova_altura = config.tamanho_para(medidas)
+                atual = config.LARGURA / config.ALTURA
+                if abs(nova_largura / nova_altura - atual) / atual > 0.25:
+                    _recarregar_pagina()
         for evento in pygame.event.get():
-            acao = "sair" if evento.type == pygame.QUIT else cena.tratar_evento(evento)
+            acao ="sair" if evento.type == pygame.QUIT else cena.tratar_evento(evento)
             if acao == "sair":
                 pygame.quit()
                 return
@@ -426,4 +543,26 @@ def executar():
                 cena = Menu(dificuldade)
         cena.atualizar(dt)
         cena.desenhar(tela)
+        if em_pe:
+            desenhar_aviso_girar(tela, tempo)
         pygame.display.flip()
+        await asyncio.sleep(0)
+
+
+def _pintar_fundo_da_pagina():
+    """No navegador, troca o fundo cinza da página pela cor do jogo."""
+    if not config.NO_NAVEGADOR:
+        return
+    try:
+        import platform
+        platform.document.body.style.background = "rgb(%d, %d, %d)" % Cores.FUNDO_TOPO
+    except Exception:
+        pass
+
+
+def _recarregar_pagina():
+    try:
+        import platform
+        platform.window.location.reload()
+    except Exception:
+        pass
